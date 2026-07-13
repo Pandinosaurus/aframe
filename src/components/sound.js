@@ -1,19 +1,23 @@
-var registerComponent = require('../core/component').registerComponent;
-var debug = require('../utils/debug');
-var THREE = require('../lib/three');
+import { registerComponent } from '../core/component.js';
+import { debug } from '../utils/index.js';
+import * as THREE from 'three';
 
 var warn = debug('components:sound:warn');
 
 /**
  * Sound component.
  */
-module.exports.Component = registerComponent('sound', {
+export var Component = registerComponent('sound', {
   schema: {
     autoplay: {default: false},
     distanceModel: {default: 'inverse', oneOf: ['linear', 'inverse', 'exponential']},
     loop: {default: false},
+    loopStart: {default: 0},
+    loopEnd: {default: 0},
     maxDistance: {default: 10000},
     on: {default: ''},
+    stopOn: {default: ''},
+    pauseOn: {default: ''},
     poolSize: {default: 1},
     positional: {default: true},
     refDistance: {default: 1},
@@ -35,6 +39,8 @@ module.exports.Component = registerComponent('sound', {
 
     // Don't pass evt because playSound takes a function as parameter.
     this.playSoundBound = function () { self.playSound(); };
+    this.stopSoundBound = function () { self.stopSound(); };
+    this.pauseSoundBound = function () { self.pauseSound(); };
   },
 
   update: function (oldData) {
@@ -58,12 +64,21 @@ module.exports.Component = registerComponent('sound', {
         sound.setRolloffFactor(data.rolloffFactor);
       }
       sound.setLoop(data.loop);
+      sound.setLoopStart(data.loopStart);
+
+      // With a loop start specified without a specified loop end, the end of the loop should be the end of the file
+      if (data.loopStart !== 0 && data.loopEnd === 0) {
+        sound.setLoopEnd(sound.buffer.duration);
+      } else {
+        sound.setLoopEnd(data.loopEnd);
+      }
+
       sound.setVolume(data.volume);
       sound.isPaused = false;
     }
 
-    if (data.on !== oldData.on) {
-      this.updateEventListener(oldData.on);
+    if (data.on !== oldData.on || data.stopOn !== oldData.stopOn || data.pauseOn !== oldData.pauseOn) {
+      this.updateEventListener(oldData);
     }
 
     // All sound values set. Load in `src`.
@@ -80,7 +95,7 @@ module.exports.Component = registerComponent('sound', {
 
         // Remove this key from cache, otherwise we can't play it again
         THREE.Cache.remove(data.src);
-        if (self.data.autoplay || self.mustPlay) { self.playSound(); }
+        if (self.data.autoplay || self.mustPlay) { self.playSound(self.processSound); }
         self.el.emit('sound-loaded', self.evtDetail, false);
       });
     }
@@ -120,20 +135,27 @@ module.exports.Component = registerComponent('sound', {
   /**
   *  Update listener attached to the user defined on event.
   */
-  updateEventListener: function (oldEvt) {
+  updateEventListener: function (oldData) {
     var el = this.el;
-    if (oldEvt) { el.removeEventListener(oldEvt, this.playSoundBound); }
-    el.addEventListener(this.data.on, this.playSoundBound);
+    var oldOnEvt = oldData && oldData.on;
+    var oldStopOnEvt = oldData && oldData.stopOn;
+    var oldPauseOnEvt = oldData && oldData.pauseOn;
+    if (oldOnEvt) { el.removeEventListener(oldOnEvt, this.playSoundBound); }
+    if (oldStopOnEvt) { el.removeEventListener(oldStopOnEvt, this.stopSoundBound); }
+    if (oldPauseOnEvt) { el.removeEventListener(oldPauseOnEvt, this.pauseSoundBound); }
+    if (this.data.on) { el.addEventListener(this.data.on, this.playSoundBound); }
+    if (this.data.stopOn) { el.addEventListener(this.data.stopOn, this.stopSoundBound); }
+    if (this.data.pauseOn) { el.addEventListener(this.data.pauseOn, this.pauseSoundBound); }
   },
 
   removeEventListener: function () {
-    this.el.removeEventListener(this.data.on, this.playSoundBound);
+    if (this.data.on) { this.el.removeEventListener(this.data.on, this.playSoundBound); }
+    if (this.data.stopOn) { this.el.removeEventListener(this.data.stopOn, this.stopSoundBound); }
+    if (this.data.pauseOn) { this.el.removeEventListener(this.data.pauseOn, this.pauseSoundBound); }
   },
 
   /**
    * Removes current sound object, creates new sound object, adds to entity.
-   *
-   * @returns {object} sound
    */
   setupSound: function () {
     var el = this.el;
@@ -208,6 +230,7 @@ module.exports.Component = registerComponent('sound', {
     if (!this.loaded) {
       warn('Sound not loaded yet. It will be played once it finished loading');
       this.mustPlay = true;
+      this.processSound = processSound;
       return;
     }
 
@@ -231,6 +254,7 @@ module.exports.Component = registerComponent('sound', {
     }
 
     this.mustPlay = false;
+    this.processSound = undefined;
   },
 
   /**

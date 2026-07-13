@@ -1,21 +1,18 @@
-var bind = require('../utils/bind');
-var utils = require('../utils');
-var diff = utils.diff;
-var debug = require('../utils/debug');
-var registerComponent = require('../core/component').registerComponent;
-var THREE = require('../lib/three');
-var mathUtils = require('../utils/math');
+import * as THREE from 'three';
+import { LightProbeGenerator } from 'three/addons/lights/LightProbeGenerator.js';
+import { diff, debug, srcLoader } from '../utils/index.js';
+import { registerComponent } from '../core/component.js';
+import * as mathUtils from '../utils/math.js';
 
 var degToRad = THREE.MathUtils.degToRad;
 var warn = debug('components:light:warn');
-var CubeLoader = new THREE.CubeTextureLoader();
 
 var probeCache = {};
 
 /**
  * Light component.
  */
-module.exports.Component = registerComponent('light', {
+export var Component = registerComponent('light', {
   schema: {
     angle: {default: 60, if: {type: ['spot']}},
     color: {type: 'color', if: {type: ['ambient', 'directional', 'hemisphere', 'point', 'spot']}},
@@ -23,7 +20,7 @@ module.exports.Component = registerComponent('light', {
     groundColor: {type: 'color', if: {type: ['hemisphere']}},
     decay: {default: 1, if: {type: ['point', 'spot']}},
     distance: {default: 0.0, min: 0, if: {type: ['point', 'spot']}},
-    intensity: {default: 1.0, min: 0, if: {type: ['ambient', 'directional', 'hemisphere', 'point', 'spot', 'probe']}},
+    intensity: {default: 3.14, min: 0, if: {type: ['ambient', 'directional', 'hemisphere', 'point', 'spot', 'probe']}},
     penumbra: {default: 0, min: 0, max: 1, if: {type: ['spot']}},
     type: {
       default: 'directional',
@@ -56,7 +53,6 @@ module.exports.Component = registerComponent('light', {
     var el = this.el;
     this.light = null;
     this.defaultTarget = null;
-    this.rendererSystem = this.el.sceneEl.systems.renderer;
     this.system.registerLight(el);
   },
 
@@ -67,7 +63,6 @@ module.exports.Component = registerComponent('light', {
     var data = this.data;
     var diffData = diff(data, oldData);
     var light = this.light;
-    var rendererSystem = this.rendererSystem;
     var self = this;
 
     // Existing light.
@@ -80,13 +75,11 @@ module.exports.Component = registerComponent('light', {
         switch (key) {
           case 'color': {
             light.color.set(value);
-            rendererSystem.applyColorCorrection(light.color);
             break;
           }
 
           case 'groundColor': {
             light.groundColor.set(value);
-            rendererSystem.applyColorCorrection(light.groundColor);
             break;
           }
 
@@ -106,7 +99,7 @@ module.exports.Component = registerComponent('light', {
               if (value.hasLoaded) {
                 self.onSetTarget(value, light);
               } else {
-                value.addEventListener('loaded', bind(self.onSetTarget, self, value, light));
+                value.addEventListener('loaded', self.onSetTarget.bind(self, value, light));
               }
             }
             break;
@@ -206,6 +199,9 @@ module.exports.Component = registerComponent('light', {
     if (newLight) {
       if (this.light) {
         el.removeObject3D('light');
+        if (el.getObject3D('cameraHelper')) {
+          el.removeObject3D('cameraHelper');
+        }
       }
 
       this.light = newLight;
@@ -239,17 +235,20 @@ module.exports.Component = registerComponent('light', {
     var data = this.data;
     var light = this.light;
 
-    light.castShadow = data.castShadow;
+    // Cast shadows if enabled and light type supports shadows.
+    light.castShadow = data.castShadow && light.shadow;
 
     // Shadow camera helper.
     var cameraHelper = el.getObject3D('cameraHelper');
-    if (data.shadowCameraVisible && !cameraHelper) {
-      el.setObject3D('cameraHelper', new THREE.CameraHelper(light.shadow.camera));
-    } else if (!data.shadowCameraVisible && cameraHelper) {
+    var shadowCameraVisible = data.shadowCameraVisible && light.shadow;
+    if (shadowCameraVisible && !cameraHelper) {
+      cameraHelper = new THREE.CameraHelper(light.shadow.camera);
+      el.setObject3D('cameraHelper', cameraHelper);
+    } else if (!shadowCameraVisible && cameraHelper) {
       el.removeObject3D('cameraHelper');
     }
 
-    if (!data.castShadow) { return light; }
+    if (!light.castShadow) { return light; }
 
     // Shadow appearance.
     light.shadow.bias = data.shadowBias;
@@ -281,12 +280,10 @@ module.exports.Component = registerComponent('light', {
   getLight: function (data) {
     var angle = data.angle;
     var color = new THREE.Color(data.color);
-    this.rendererSystem.applyColorCorrection(color);
     color = color.getHex();
     var decay = data.decay;
     var distance = data.distance;
     var groundColor = new THREE.Color(data.groundColor);
-    this.rendererSystem.applyColorCorrection(groundColor);
     groundColor = groundColor.getHex();
     var intensity = data.intensity;
     var type = data.type;
@@ -305,7 +302,7 @@ module.exports.Component = registerComponent('light', {
           if (target.hasLoaded) {
             this.onSetTarget(target, light);
           } else {
-            target.addEventListener('loaded', bind(this.onSetTarget, this, target, light));
+            target.addEventListener('loaded', this.onSetTarget.bind(this, target, light));
           }
         }
         return light;
@@ -326,7 +323,7 @@ module.exports.Component = registerComponent('light', {
           if (target.hasLoaded) {
             this.onSetTarget(target, light);
           } else {
-            target.addEventListener('loaded', bind(this.onSetTarget, this, target, light));
+            target.addEventListener('loaded', this.onSetTarget.bind(this, target, light));
           }
         }
         return light;
@@ -352,24 +349,25 @@ module.exports.Component = registerComponent('light', {
     if (!data.envMap) {
       // reset parameters if no map
       light.copy(new THREE.LightProbe());
+      return;
     }
 
-    if (probeCache[data.envMap] instanceof window.Promise) {
-      probeCache[data.envMap].then(function (tempLightProbe) {
-        light.copy(tempLightProbe);
-      });
-    }
-    if (probeCache[data.envMap] instanceof THREE.LightProbe) {
-      light.copy(probeCache[data.envMap]);
-    }
-    probeCache[data.envMap] = new window.Promise(function (resolve) {
-      utils.srcLoader.validateCubemapSrc(data.envMap, function loadEnvMap (urls) {
-        CubeLoader.load(urls, function (cube) {
-          var tempLightProbe = THREE.LightProbeGenerator.fromCubeTexture(cube);
-          probeCache[data.envMap] = tempLightProbe;
-          light.copy(tempLightProbe);
+    // Populate the cache if not done for this envMap yet
+    var sceneEl = this.el.sceneEl;
+    if (probeCache[data.envMap] === undefined) {
+      probeCache[data.envMap] = new Promise(function (resolve) {
+        srcLoader.validateCubemapSrc(data.envMap, function loadEnvMap (srcs) {
+          sceneEl.systems.material.loadCubeMapTexture(srcs, function (texture) {
+            var tempLightProbe = LightProbeGenerator.fromCubeTexture(texture);
+            resolve(tempLightProbe);
+          });
         });
       });
+    }
+
+    // Copy over light probe properties
+    probeCache[data.envMap].then(function (tempLightProbe) {
+      light.copy(tempLightProbe);
     });
   },
 

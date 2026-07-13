@@ -1,16 +1,19 @@
 #!/usr/bin/env node
-
-const path = require('path');
-
+const fs = require('node:fs');
+const path = require('node:path');
 const shell = require('shelljs');
-const replace = require('replace-in-file');
 
-// Inject `<meta>` tag for Chrome for Android's WebVR Origin Trial:
-// https://webvr.rocks/chrome_for_android#what_is_the_webvr_origin_trial
-const originTrialMetaTag = `
-  <!-- Origin Trial Token, feature = WebVR (For Chrome M59+), origin = https://aframe.io, expires = 2017-07-28 -->
-  <meta http-equiv="origin-trial" data-feature="WebVR (For Chrome M59+)" data-expires="2017-07-28" content="ArFv1ZeTwzkhjNE00uAE+XtiQB41fwqG/TqlFMLrepd9sforQSvQE/tgfIbUMYNuNre4QR1k4/z8xp2mV3dbhwwAAABeeyJvcmlnaW4iOiJodHRwczovL2FmcmFtZS5pbzo0NDMiLCJmZWF0dXJlIjoiV2ViVlIxLjEiLCJleHBpcnkiOjE1MDEyMTcwMDIsImlzU3ViZG9tYWluIjp0cnVlfQ==">
-`.trim();
+const pkg = require('../package.json');
+const aframeVersion = pkg.version;
+
+// Take the super-three version from the released tag's package.json, not from
+// master, so the gh-pages examples reference the three version that shipped
+// with this A-Frame release.
+const taggedPkg = JSON.parse(
+  shell.exec(`git show v${aframeVersion}:package.json`, { silent: true }).stdout
+);
+const threeVersion = taggedPkg.dependencies.three.split('@')[1];
+
 const rootDir = path.join(__dirname, '..');
 
 shell.cd(rootDir);
@@ -21,17 +24,39 @@ shell.cp('-r', [
   '.nojekyll',
   'dist',
   'examples',
-  '*.html',
   '*.md'
 ], 'gh-pages');
 
-function htmlReplace (before, after) {
-  replace.sync({
-    from: before,
-    to: after,
-    files: 'gh-pages/**/*.html'
-  });
+function replaceInFileSync ({ files, processor, processorIfChanged = [] }) {
+  for (const file of fs.globSync(files)) {
+    const input = fs.readFileSync(file, 'utf8');
+    let output = processor.reduce((content, process) => process(content), input);
+    // processorIfChanged only runs on files the processors above modified, i.e.
+    // the examples that reference the local A-Frame build.
+    if (output !== input) {
+      output = processorIfChanged.reduce((content, process) => process(content), output);
+    }
+    if (output !== input) {
+      fs.writeFileSync(file, output);
+    }
+  }
 }
 
-htmlReplace('dist/aframe-master.js', 'dist/aframe-master.min.js');
-htmlReplace('<head>', `<head>\n    ${originTrialMetaTag}`);
+function htmlReplace (before, after) {
+  return (input) => input.replace(before, after);
+}
+
+replaceInFileSync({
+  files: 'gh-pages/**/*.html',
+  processor: [
+    htmlReplace('"../../../dist/aframe-master.module.min.js', `"https://aframe.io/releases/${aframeVersion}/aframe.module.min.js`),
+    htmlReplace('"../../../dist/aframe-master.js', `"https://aframe.io/releases/${aframeVersion}/aframe.min.js`),
+    htmlReplace(/"\.\.\/\.\.\/\.\.\/super-three-package/g, `"https://cdn.jsdelivr.net/npm/super-three@${threeVersion}`),
+    htmlReplace(/"\.\.\/\.\.\/js\//g, '"https://cdn.jsdelivr.net/gh/aframevr/aframe@gh-pages/examples/js/'),
+    htmlReplace(/"\.\.\/\.\.\/assets\//g, '"https://cdn.jsdelivr.net/gh/aframevr/aframe@gh-pages/examples/assets/')
+  ],
+  // Add the "Remix" dropdown (CodeSandbox/Krabbel) to the published examples.
+  processorIfChanged: [
+    htmlReplace('</head>', '  <script src="https://cdn.jsdelivr.net/gh/aframevr/aframe@gh-pages/examples/js/remix-dropdown.js"></script>\n  </head>')
+  ]
+});

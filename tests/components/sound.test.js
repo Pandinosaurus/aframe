@@ -1,14 +1,12 @@
-/* global assert, process, sinon, setup, suite, test */
-var entityFactory = require('../helpers').entityFactory;
-var THREE = require('index').THREE;
+/* global assert, sinon, setup, suite, test */
+import { entityFactory } from '../helpers.js';
+import THREE from 'lib/three.js';
 
 suite('sound', function () {
   setup(function (done) {
     var el = this.el = entityFactory();
-    THREE.Cache.files = {};
+    THREE.Cache.clear();
     setTimeout(() => {
-      el.sceneEl.addEventListener('loaded', function () { done(); });
-
       el.setAttribute('sound', {
         autoplay: true,
         src: 'url(mysoundfile.mp3)',
@@ -19,6 +17,9 @@ suite('sound', function () {
         rolloffFactor: 4,
         poolSize: 3
       });
+
+      if (el.sceneEl.hasLoaded) { done(); }
+      el.sceneEl.addEventListener('loaded', function () { done(); });
     });
   });
 
@@ -101,7 +102,7 @@ suite('sound', function () {
       el.pause();
 
       // Currently we're calling stop when the component is paused as we reset
-      // the state on `play` instad of resuming it
+      // the state on `play` instead of resuming it
       assert.notOk(sound.pause.called);
       assert.ok(sound.stop.called);
     });
@@ -175,6 +176,23 @@ suite('sound', function () {
       assert.ok(sound.play.called);
     });
 
+    test('plays sound and calls processSound callback when not loaded', function (done) {
+      var el = this.el;
+      var processSoundStub = sinon.stub();
+
+      el.setAttribute('sound', 'src', 'url(base/tests/assets/test.ogg)');
+      el.components.sound.playSound(processSoundStub);
+      assert.notOk(el.components.sound.isPlaying);
+      assert.ok(el.components.sound.mustPlay);
+
+      el.addEventListener('sound-loaded', function () {
+        assert.ok(el.components.sound.isPlaying);
+        assert.notOk(el.components.sound.mustPlay);
+        assert.ok(processSoundStub.calledOnce);
+        done();
+      });
+    });
+
     test('plays sound if sound already playing when changing src', function (done) {
       var el = this.el;
       var playSoundStub = el.components.sound.playSound = sinon.stub();
@@ -186,7 +204,9 @@ suite('sound', function () {
       el.setAttribute('sound', 'src', 'url(base/tests/assets/test.ogg)');
       el.components.sound.isPlaying = true;
     });
+  });
 
+  suite('on', function () {
     test('plays sound on event', function (done) {
       const el = this.el;
       el.setAttribute('sound', 'on', 'foo');
@@ -196,6 +216,81 @@ suite('sound', function () {
         assert.ok(playSoundStub.called);
         done();
       });
+    });
+
+    test('does not listen to old on event after change', function (done) {
+      const el = this.el;
+      el.setAttribute('sound', 'on', 'foo');
+      el.setAttribute('sound', 'on', 'bar');
+      const playSoundStub = el.components.sound.playSound = sinon.stub();
+      el.emit('foo');
+      el.emit('bar');
+      setTimeout(() => {
+        assert.ok(playSoundStub.calledOnce);
+        done();
+      });
+    });
+  });
+
+  suite('stopOn', function () {
+    test('stops sound on event', function (done) {
+      const el = this.el;
+      el.setAttribute('sound', 'stopOn', 'zone-leave');
+      const stopSoundStub = el.components.sound.stopSound = sinon.stub();
+      el.emit('zone-leave');
+      setTimeout(() => {
+        assert.ok(stopSoundStub.called);
+        done();
+      });
+    });
+
+    test('does not listen to old stopOn event after change', function (done) {
+      const el = this.el;
+      el.setAttribute('sound', 'stopOn', 'zone-leave');
+      el.setAttribute('sound', 'stopOn', 'experience-end');
+      const stopSoundStub = el.components.sound.stopSound = sinon.stub();
+      el.emit('zone-leave');
+      el.emit('experience-end');
+      setTimeout(() => {
+        assert.ok(stopSoundStub.calledOnce);
+        done();
+      });
+    });
+  });
+
+  suite('pauseOn', function () {
+    test('pauses sound on event', function (done) {
+      const el = this.el;
+      el.setAttribute('sound', 'pauseOn', 'menu-open');
+      const pauseSoundStub = el.components.sound.pauseSound = sinon.stub();
+      el.emit('menu-open');
+      setTimeout(() => {
+        assert.ok(pauseSoundStub.called);
+        done();
+      });
+    });
+
+    test('does not listen to old pauseOn event after change', function (done) {
+      const el = this.el;
+      el.setAttribute('sound', 'pauseOn', 'menu-open');
+      el.setAttribute('sound', 'pauseOn', 'app-blur');
+      const pauseSoundStub = el.components.sound.pauseSound = sinon.stub();
+      el.emit('menu-open');
+      el.emit('app-blur');
+      setTimeout(() => {
+        assert.ok(pauseSoundStub.calledOnce);
+        done();
+      });
+    });
+  });
+
+  suite('updateEventListener', function () {
+    test('does not register a listener for empty event names', function () {
+      var el = this.el;
+      // on, stopOn and pauseOn all default to empty string.
+      var addEventListenerSpy = sinon.spy(el, 'addEventListener');
+      el.components.sound.updateEventListener();
+      assert.notOk(addEventListenerSpy.calledWith(''));
     });
   });
 
@@ -219,7 +314,7 @@ suite('sound', function () {
       var sceneEl = this.el.sceneEl;
       var assetsEl = sceneEl.querySelector('a-assets');
       sceneEl.removeChild(assetsEl);
-      process.nextTick(function () {
+      setTimeout(function () {
         assetsEl = document.createElement('a-assets');
         var audioEl = document.createElement('audio');
         audioEl.setAttribute('src', 'base/tests/assets/test.ogg');
@@ -242,7 +337,7 @@ suite('sound', function () {
       var sceneEl = this.el.sceneEl;
       var assetsEl = sceneEl.querySelector('a-assets');
       sceneEl.removeChild(assetsEl);
-      process.nextTick(function () {
+      setTimeout(function () {
         assetsEl = document.createElement('a-assets');
         var audioEl = document.createElement('audio');
         audioEl.setAttribute('src', 'base/tests/assets/test.ogg');
@@ -266,7 +361,7 @@ suite('sound', function () {
       var sceneEl = this.el.sceneEl;
       var assetsEl = sceneEl.querySelector('a-assets');
       sceneEl.removeChild(assetsEl);
-      process.nextTick(function () {
+      setTimeout(function () {
         assetsEl = document.createElement('a-assets');
         var assetItemEl = document.createElement('a-asset-item');
         assetItemEl.setAttribute('src', 'base/tests/assets/test.ogg');
@@ -274,7 +369,7 @@ suite('sound', function () {
         assetItemEl.setAttribute('response-type', 'arraybuffer');
         assetsEl.appendChild(assetItemEl);
         sceneEl.appendChild(assetsEl);
-        process.nextTick(function () {
+        setTimeout(function () {
           var el = document.createElement('a-entity');
           el.setAttribute('sound', 'src', '#testogg');
           el.addEventListener('sound-loaded', function () {

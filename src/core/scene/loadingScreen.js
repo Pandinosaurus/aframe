@@ -1,5 +1,6 @@
-/* global THREE */
-var utils = require('../../utils/');
+import * as THREE from 'three';
+import { AFRAME_INJECTED } from '../../constants/index.js';
+import * as utils from '../../utils/index.js';
 var styleParser = utils.styleParser;
 
 var sceneEl;
@@ -9,7 +10,7 @@ var getSceneCanvasSize;
 var ATTR_NAME = 'loading-screen';
 var LOADER_TITLE_CLASS = 'a-loader-title';
 
-module.exports.setup = function setup (el, getCanvasSize) {
+export function setup (el, getCanvasSize) {
   sceneEl = el;
   getSceneCanvasSize = getCanvasSize;
   var loaderAttribute = sceneEl.hasAttribute(ATTR_NAME) ? styleParser.parse(sceneEl.getAttribute(ATTR_NAME)) : undefined;
@@ -23,7 +24,7 @@ module.exports.setup = function setup (el, getCanvasSize) {
   var sphereMesh2;
   var sphereMesh3;
   var camera;
-  var clock;
+  var timer;
   var time;
   var render;
 
@@ -37,11 +38,12 @@ module.exports.setup = function setup (el, getCanvasSize) {
   sphereMesh2 = sphereMesh1.clone();
   sphereMesh3 = sphereMesh1.clone();
   camera = new THREE.PerspectiveCamera(80, window.innerWidth / window.innerHeight, 0.0005, 10000);
-  clock = new THREE.Clock();
+  timer = new THREE.Timer();
   time = 0;
   render = function () {
     sceneEl.renderer.render(loaderScene, camera);
-    time = clock.getElapsedTime() % 4;
+    timer.update();
+    time = timer.getElapsed() % 4;
     sphereMesh1.visible = time >= 1;
     sphereMesh2.visible = time >= 2;
     sphereMesh3.visible = time >= 3;
@@ -65,14 +67,14 @@ module.exports.setup = function setup (el, getCanvasSize) {
     window.addEventListener('resize', function () { resize(camera); });
     sceneEl.renderer.setAnimationLoop(render);
   }, 200);
-};
+}
 
-module.exports.remove = function remove () {
+export function remove () {
   window.removeEventListener('resize', resize);
   if (!titleEl) { return; }
   // Hide title.
   titleEl.style.display = 'none';
-};
+}
 
 function resize (camera) {
   var embedded = sceneEl.hasAttribute('embedded');
@@ -88,5 +90,6 @@ function setupTitle () {
   titleEl.className = LOADER_TITLE_CLASS;
   titleEl.innerHTML = document.title;
   titleEl.style.display = 'none';
+  titleEl.setAttribute(AFRAME_INJECTED, '');
   sceneEl.appendChild(titleEl);
 }
